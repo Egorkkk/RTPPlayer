@@ -49,6 +49,7 @@ static void logRequiredFactoryDiagnostics() {
     logFactoryDiagnostic("h265parse");
     logFactoryDiagnostic("androidvideosink");
     logFactoryDiagnostic("amcviddec-omxgoogleh265decoder");
+    logFactoryDiagnostic("avdec_h265");
 }
 
 static std::string toAsciiLower(const char* value) {

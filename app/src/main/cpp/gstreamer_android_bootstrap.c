@@ -23,6 +23,8 @@ GST_PLUGIN_STATIC_DECLARE(rtpmanager);
 GST_PLUGIN_STATIC_DECLARE(videoparsersbad);
 GST_PLUGIN_STATIC_DECLARE(isomp4);
 GST_PLUGIN_STATIC_DECLARE(androidmedia);
+GST_PLUGIN_STATIC_DECLARE(opengl);
+GST_PLUGIN_STATIC_DECLARE(libav);
 GST_PLUGIN_STATIC_DECLARE(videoconvertscale);
 GST_PLUGIN_STATIC_DECLARE(playback);
 
@@ -65,6 +67,8 @@ gst_init_static_plugins(void)
     GST_PLUGIN_STATIC_REGISTER(videoparsersbad);
     GST_PLUGIN_STATIC_REGISTER(isomp4);
     GST_PLUGIN_STATIC_REGISTER(androidmedia);
+    GST_PLUGIN_STATIC_REGISTER(opengl);
+    GST_PLUGIN_STATIC_REGISTER(libav);
     GST_PLUGIN_STATIC_REGISTER(videoconvertscale);
     GST_PLUGIN_STATIC_REGISTER(playback);
 

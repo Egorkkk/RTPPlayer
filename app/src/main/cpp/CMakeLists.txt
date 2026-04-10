@@ -90,6 +90,8 @@ target_link_libraries(
     ${GST_LIB_DIR}/gstreamer-1.0/libgstvideoparsersbad.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstisomp4.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstandroidmedia.a
+    ${GST_LIB_DIR}/gstreamer-1.0/libgstopengl.a
+    ${GST_LIB_DIR}/gstreamer-1.0/libgstlibav.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstvideoconvertscale.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstplayback.a
     -Wl,--no-whole-archive
@@ -108,6 +110,15 @@ target_link_libraries(
     ${GST_LIB_DIR}/libgstgl-1.0.a
     ${GST_LIB_DIR}/libgstriff-1.0.a
     ${GST_LIB_DIR}/libgstphotography-1.0.a
+    ${GST_LIB_DIR}/libgraphene-1.0.a
+    ${GST_LIB_DIR}/libpng16.a
+    ${GST_LIB_DIR}/libjpeg.a
+    ${GST_LIB_DIR}/libavcodec.a
+    ${GST_LIB_DIR}/libavfilter.a
+    ${GST_LIB_DIR}/libavformat.a
+    ${GST_LIB_DIR}/libavutil.a
+    ${GST_LIB_DIR}/libswscale.a
+    ${GST_LIB_DIR}/libswresample.a
 
     # 3. GStreamer Core
     ${GST_LIB_DIR}/libgstreamer-1.0.a
