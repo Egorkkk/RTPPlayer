@@ -26,6 +26,8 @@
 #include <pthread.h>
 #include <string>
 
+typedef struct _GstAppSink GstAppSink;
+
 // Forward declarations for GLib/GStreamer types if we didn't include gst.h
 // But since we included gst.h, we can just use them.
 
@@ -83,6 +85,9 @@ public:
 private:
     // Internal helpers
     bool buildPipeline();
+    void resetSampleStats();
+    static GstFlowReturn onNewSampleThunk(GstAppSink* sink, gpointer userData);
+    GstFlowReturn onNewSample(GstAppSink* sink);
 
     // GLib main loop thread
     void startMainLoop();
@@ -129,6 +134,16 @@ private:
 
     // The udpsrc element — we use it to check byte counters for data flow.
     void* udpsrcElement_ = nullptr;
+
+    // The appsink element that receives parsed HEVC output after h265parse.
+    void* appSinkElement_ = nullptr;
+
+    // Parser/appsink diagnostics.
+    std::atomic<uint64_t> sampleCount_{0};
+    std::atomic<uint64_t> sampleBytes_{0};
+    bool sawVps_ = false;
+    bool sawSps_ = false;
+    bool sawPps_ = false;
 };
 
 #endif // GST_PLAYER_H

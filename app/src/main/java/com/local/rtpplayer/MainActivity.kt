@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         private const val MAX_RECONNECT_ATTEMPTS = 10
     }
 
-    // The SurfaceView that GStreamer will render into.
+    // Fullscreen surface reserved for the Android MediaCodec stage.
     private lateinit var surfaceView: android.view.SurfaceView
 
     // "No Signal" overlay TextView.
@@ -99,22 +99,16 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
     //
     // Edit this string to change UDP port, latency, decoder, etc.
     //
-    // This is the Android equivalent of the known-working desktop pipeline:
-    //   udpsrc ! rtpjitterbuffer ! rtph265depay ! avdec_h265 ! fpsdisplaysink
-    //
-    // Key differences for Android:
-    //   - androidvideosink replaces fpsdisplaysink/d3d11videosink
-    //   - sync=false for minimal latency (no audio clock to sync to)
-    //   - named "androidvideosink" so native code finds it by name
+    // Active branch path: ingest/jitter/depay/parse only.
+    // Decode/render moves to Android MediaCodec and will be wired later.
     //
     private val defaultPipeline = buildString {
         append("udpsrc name=udpsrc0 port=5600 buffer-size=7000 ! ")
-        append("application/x-rtp ! ")
+        append("application/x-rtp,media=video,encoding-name=H265,payload=96 ! ")
         append("rtpjitterbuffer latency=0 drop-on-latency=true ! ")
         append("rtph265depay ! ")
-        append("h265parse ! ")
-        append("amcviddec-omxgoogleh265decoder ! ")
-        append("androidvideosink name=androidvideosink sync=false")
+        append("h265parse config-interval=-1 ! ")
+        append("appsink name=hevcappsink emit-signals=false sync=false max-buffers=8 drop=true")
     }
 
     // ── Activity Lifecycle ──────────────────────────────────────────
@@ -283,7 +277,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         if (ok) {
             pipelineRunning = true
             reconnectAttempts = 0
-            Log.i(TAG, "tryStartPipeline — pipeline started successfully")
+            Log.i(TAG, "tryStartPipeline — parse-only ingest pipeline started successfully")
         } else {
             reconnectAttempts++
             Log.e(TAG, "tryStartPipeline — pipeline start FAILED (attempt $reconnectAttempts/$MAX_RECONNECT_ATTEMPTS)")

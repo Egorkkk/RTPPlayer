@@ -17,6 +17,7 @@ G_PASTE(g_io_, G_PASTE(name, _load)) (NULL)
  * gst_init_static_plugins(), which gst_init() calls during startup.
  */
 GST_PLUGIN_STATIC_DECLARE(coreelements);
+GST_PLUGIN_STATIC_DECLARE(app);
 GST_PLUGIN_STATIC_DECLARE(udp);
 GST_PLUGIN_STATIC_DECLARE(rtp);
 GST_PLUGIN_STATIC_DECLARE(rtpmanager);
@@ -61,6 +62,7 @@ gst_init_static_plugins(void)
     LOGI("GST_DIAG sdk static bootstrap starting");
 
     GST_PLUGIN_STATIC_REGISTER(coreelements);
+    GST_PLUGIN_STATIC_REGISTER(app);
     GST_PLUGIN_STATIC_REGISTER(udp);
     GST_PLUGIN_STATIC_REGISTER(rtp);
     GST_PLUGIN_STATIC_REGISTER(rtpmanager);

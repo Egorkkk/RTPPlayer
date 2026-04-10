@@ -1,268 +1,402 @@
-# TASKS.md
+# tasks.md
 
-## Execution rule
+## Project direction
 
-**Important:** after completing each stage, stop and wait for explicit human approval.
+We are using **Variant A**:
 
-Do not proceed to the next stage automatically.
+- keep GStreamer only for **network ingest + RTP jitter + H.265 depay + H.265 parse**
+- do **not** use GStreamer for Android decode or video rendering
+- decode with **Android MediaCodec**
+- render with **Android SurfaceView / Surface**
 
-For every completed stage, provide:
+### Fixed architectural decision
 
-1. a short summary of what was done
-2. the exact files added or changed
-3. the exact commands run
-4. any assumptions made
-5. any blockers, risks, or open questions
+The playback path must be:
 
-Then stop and ask for approval.
+`udpsrc -> rtpjitterbuffer -> rtph265depay -> h265parse -> appsink/native bridge -> MediaCodec -> Surface`
 
----
-
-## Stage 0 — repository and implementation plan
-
-### Goal
-
-Set up the repository skeleton and produce a concrete execution plan before implementation begins.
-
-### Tasks
-
-* Inspect the repository state
-* Create a short implementation plan
-* Create a detailed task breakdown
-* Record assumptions about:
-
-  * target tablet
-  * Android version
-  * receiver UDP port
-  * expected pipeline behavior
-  * 120 fps input vs 60 Hz display limitation
-* Create initial project documentation files if missing
-* Do **not** start Android implementation yet
-
-### Expected output
-
-* initial repository structure if needed
-* written plan
-* written assumptions
-* no heavy implementation yet
-
-### Human approval gate
-
-Stop after this stage and ask for approval before creating the Android project.
+Anything that attempts Android video decode/render through GStreamer must be considered **out of scope** for this branch.
 
 ---
 
-## Stage 1 — create Android project skeleton
+## Global constraints
 
-### Goal
-
-Create the minimal Android Studio project structure.
-
-### Tasks
-
-* Create Android Studio app project
-* Configure Gradle
-* Configure app module
-* Add minimal MainActivity
-* Set up fullscreen landscape app shell
-* Add SurfaceView placeholder in UI
-* Add keep-screen-on behavior
-* Ensure the project structure is clean and minimal
-* Ensure the project can at least sync/open in Android Studio
-
-### Expected output
-
-* Android project exists
-* app module exists
-* MainActivity exists
-* SurfaceView placeholder exists
-* basic app shell ready
-
-### Human approval gate
-
-Stop after this stage and ask for approval before adding native/GStreamer integration.
+- Do not spend time trying to revive `androidmedia`, `androidvideosink`, `glimagesink`, `glsinkbin`, `autovideosink`, `decodebin`, `playbin`, or `gstlibav` for Android playback.
+- RTP dynamic payload type **96** is expected and must be treated as valid.
+- The current goal is **first visible video on screen**.
+- Low latency, packet-loss recovery, frame pacing, and advanced resilience are **secondary tasks** after first image appears.
+- Prefer minimal invasive changes to the current Android/GStreamer project.
 
 ---
 
-## Stage 2 — add native layer and GStreamer integration scaffolding
+## Stage 1 — Freeze the playback architecture
 
-### Goal
+### Task 1.1 — Remove GStreamer decode/render attempts from active code path
 
-Integrate the native layer and prepare the project for GStreamer on Android.
+**Goal:** Ensure the app no longer tries to build or use any GStreamer-based decode/render path.
 
-### Tasks
+**Actions:**
+- inspect current pipeline builder code
+- remove or disable any branches that attempt to append:
+  - video decoders
+  - `decodebin`
+  - `playbin`
+  - video sinks
+  - Android media helper paths
+  - GL sinks
+- keep only the ingest path up to `h265parse`
 
-* Add NDK/CMake configuration
-* Add JNI/native bridge files
-* Wire native library loading into the app
-* Add GStreamer Android integration scaffolding
-* Add placeholders for pipeline creation/start/stop
-* Ensure the project still syncs/builds structurally
-* Add basic logcat logging for native init path
+**Deliverable:**
+- active pipeline builder produces only ingest/parse pipeline
+- logs clearly show that decoder/sink discovery is no longer part of the startup path
 
-### Expected output
-
-* CMakeLists.txt created
-* native source files created
-* JNI bridge connected
-* app prepared for GStreamer SDK integration
-
-### Human approval gate
-
-Stop after this stage and ask for approval before implementing actual playback.
+**Acceptance criteria:**
+- pipeline creation is deterministic
+- there is no runtime branch trying to find or instantiate video decoder or video sink through GStreamer
 
 ---
 
-## Stage 3 — implement first working playback path
+## Stage 2 — Build stable ingest pipeline
 
-### Goal
+### Task 2.1 — Lock the pipeline to parse-only mode
 
-Make video appear on screen.
+**Goal:** Have one stable pipeline that reaches `h265parse` successfully.
 
-### Tasks
+**Target pipeline:**
 
-* Implement SurfaceView/native surface handoff
-* Initialize GStreamer correctly
-* Build the first working Android pipeline for the known RTP/H.265 stream
-* Listen on UDP port `5600`
-* Start playback automatically on launch or resume
-* Render video to the screen
-* Add essential logs for:
+`udpsrc port=5600 caps=application/x-rtp,media=video,encoding-name=H265,payload=96 ! rtpjitterbuffer ! rtph265depay ! h265parse ! appsink`
 
-  * pipeline creation
-  * state changes
-  * playback errors
-* Keep implementation as direct as possible
+**Notes:**
+- exact caps syntax may vary depending on current codebase and helper functions
+- payload type 96 must be explicit where helpful
+- `appsink` may be replaced with a custom native sink if that is cleaner in the current project
 
-### Expected output
+**Actions:**
+- harden pipeline construction
+- add state-change logging
+- add bus error logging
+- add caps logging at critical points if possible
 
-* first real playback attempt implemented
-* app should attempt to show live video
-* logs should help diagnose pipeline issues
+**Deliverable:**
+- parse-only pipeline builds and runs reliably
 
-### Human approval gate
+**Acceptance criteria:**
+- no `gst_parse_launch failed`
+- pipeline reaches PLAYING state
+- samples/data continue to arrive after startup
 
-Stop after this stage and ask for approval before adding lifecycle hardening and reconnect behavior.
+### Task 2.2 — Add appsink/native output logging
 
----
+**Goal:** Prove that parsed H.265 data exits the pipeline.
 
-## Stage 4 — lifecycle hardening
+**Actions:**
+- attach callback for appsink sample reception
+- log for each received sample:
+  - buffer size
+  - pts/dts if available
+  - keyframe/config flags if available
+  - caps string on first sample
+- keep logs rate-limited if necessary
 
-### Goal
+**Deliverable:**
+- runtime logs showing parsed H.265 payload delivery beyond `h265parse`
 
-Make pause/resume/destroy behavior safe and predictable.
-
-### Tasks
-
-* Handle onResume / onPause / onDestroy cleanly
-* Ensure the pipeline stops or pauses correctly
-* Ensure surface recreation is handled safely
-* Prevent broken pipeline state after app background/foreground transitions
-* Improve logs around lifecycle transitions
-
-### Expected output
-
-* basic lifecycle stability
-* reduced risk of stuck or invalid pipeline state
-
-### Human approval gate
-
-Stop after this stage and ask for approval before adding reconnect and no-signal handling.
+**Acceptance criteria:**
+- repeated samples received in PLAYING state
+- sample sizes are non-zero
 
 ---
 
-## Stage 5 — reconnect and no-signal behavior
+## Stage 3 — Inspect what exactly comes out of h265parse
 
-### Goal
+### Task 3.1 — Determine stream format at appsink boundary
 
-Improve resilience when the stream is missing or interrupted.
+**Goal:** Understand whether the bridge receives Annex B NAL units, AU-aligned buffers, codec config blocks, or another format.
 
-### Tasks
+**Actions:**
+- inspect appsink caps and parser output format
+- log whether buffers appear AU-aligned
+- inspect first bytes of several buffers to detect start codes and NAL structure
+- verify presence of VPS / SPS / PPS before first decodable frame
 
-* Add minimal reconnect or restart behavior if appropriate
-* Ensure app does not crash when stream is absent
-* Add optional “no signal” / status indication only if simple
-* Keep this lightweight
-* Do not add complex UI
+**Deliverable:**
+- written note in code comments or project notes describing actual parser output format
 
-### Expected output
+**Acceptance criteria:**
+- team can answer all of the following:
+  - are buffers NAL-aligned or AU-aligned?
+  - are VPS/SPS/PPS present in the stream?
+  - do buffers contain Annex B start codes?
+  - what should be passed into MediaCodec?
 
-* better behavior on missing/interrupted stream
-* lightweight failure handling
+### Task 3.2 — Add optional debug dump mode
 
-### Human approval gate
+**Goal:** Make parser output inspectable outside the live app.
 
-Stop after this stage and ask for approval before cleanup and documentation finalization.
+**Actions:**
+- add optional debug flag to dump first N buffers to file
+- add optional hex summary of first bytes for logs
+- keep feature disabled by default
 
----
+**Deliverable:**
+- reproducible debug mode for offline inspection
 
-## Stage 6 — cleanup, documentation, and handoff
-
-### Goal
-
-Make the project usable by a human without reverse-engineering it.
-
-### Tasks
-
-* Clean up filenames and project structure if needed
-* Remove unnecessary code and dead scaffolding
-* Finalize README.md
-* Document:
-
-  * prerequisites
-  * Android Studio setup
-  * NDK/CMake setup
-  * GStreamer SDK setup
-  * build steps
-  * adb install steps
-  * where to edit UDP port and pipeline
-* Write final implementation report
-* Summarize known limitations and suggested next tests on the real tablet
-
-### Expected output
-
-* buildable documented project
-* README complete
-* clear handoff
-
-### Human approval gate
-
-Stop after this stage and wait for the human to accept completion or request follow-up changes.
+**Acceptance criteria:**
+- first parser outputs can be saved and later inspected without changing the live path
 
 ---
 
-## Stage reporting template
+## Stage 4 — Create Android render surface
 
-Use this format at the end of every stage:
+### Task 4.1 — Add fullscreen SurfaceView
 
-### Stage completed
+**Goal:** Provide a stable Android-native rendering target.
 
-`<stage number and name>`
+**Actions:**
+- add a fullscreen `SurfaceView` in the main activity or playback screen
+- implement `SurfaceHolder.Callback`
+- log:
+  - surface created
+  - surface changed
+  - surface destroyed
+- expose current `Surface` to decoder layer
 
-### What was done
+**Deliverable:**
+- a visible fullscreen rendering surface with clear lifecycle logs
 
-* ...
+**Acceptance criteria:**
+- app starts with fullscreen SurfaceView
+- logs confirm surface creation and destruction events
 
-### Files added
+---
 
-* ...
+## Stage 5 — Implement MediaCodec HEVC decoder wrapper
 
-### Files changed
+### Task 5.1 — Create HevcDecoder abstraction
 
-* ...
+**Goal:** Isolate all Android decode logic into one focused component.
 
-### Commands run
+**Suggested class:**
+- `HevcDecoder.kt`
 
-* ...
+**Required methods:**
+- `start(surface: Surface)`
+- `queueAccessUnit(data: ByteArray, ptsUs: Long, isKeyframe: Boolean)`
+- `stop()`
+- `release()`
 
-### Assumptions
+**Actions:**
+- create MediaFormat for `video/hevc`
+- use `MediaCodecList.findDecoderForFormat(...)` to locate compatible decoder
+- instantiate codec by name
+- configure codec to decode to provided `Surface`
+- start codec
 
-* ...
+**Deliverable:**
+- reusable decoder wrapper with logs around initialization and shutdown
 
-### Open questions / risks
+**Acceptance criteria:**
+- logs show selected decoder name
+- decoder config succeeds without exception on target device
 
-* ...
+### Task 5.2 — Implement input queue logic
 
-### Approval request
+**Goal:** Feed parsed HEVC data into MediaCodec.
 
-Please review this stage. I will not proceed to the next stage until you explicitly approve it.
+**Actions:**
+- implement input buffer dequeue/queue flow
+- assign monotonic `ptsUs`
+- log queued input count and buffer sizes
+- handle temporary backpressure cleanly
+
+**Deliverable:**
+- decoder accepts input units from bridge layer
+
+**Acceptance criteria:**
+- no immediate codec failure when input starts
+- input queue activity visible in logs
+
+### Task 5.3 — Implement output drain / render logic
+
+**Goal:** Confirm that decoder outputs frames and renders them to Surface.
+
+**Actions:**
+- implement synchronous drain loop or callback-based mode
+- log:
+  - output format changed
+  - rendered frame count
+  - codec exceptions
+- release output buffers for rendering to surface
+
+**Deliverable:**
+- decoder output path with visible diagnostics
+
+**Acceptance criteria:**
+- output callbacks or output buffer events appear in logs
+- successful render path is observable
+
+---
+
+## Stage 6 — Build the native-to-Java bridge
+
+### Task 6.1 — Define the bridge contract
+
+**Goal:** Make data handoff between native parser output and Android decoder explicit and stable.
+
+**Bridge payload should include:**
+- parsed HEVC data buffer
+- `ptsUs`
+- `isKeyframe`
+- optional `isConfig`
+
+**Actions:**
+- define JNI method(s) or callback interface
+- avoid calling Java for tiny RTP fragments
+- pass parser output at the level of complete parser buffers, ideally complete access units
+
+**Deliverable:**
+- documented bridge interface between native code and Kotlin/Java
+
+**Acceptance criteria:**
+- one clear code path exists from appsink callback to `HevcDecoder.queueAccessUnit(...)`
+
+### Task 6.2 — Add bounded buffering between native and decoder
+
+**Goal:** Avoid UI-thread or JNI-induced instability.
+
+**Actions:**
+- add a small bounded queue between native callback and decoder thread
+- drop oldest or newest items according to chosen policy when queue is full
+- log queue pressure events
+
+**Deliverable:**
+- simple bridge buffering with predictable behavior under load
+
+**Acceptance criteria:**
+- no unbounded growth in memory or queued samples
+
+---
+
+## Stage 7 — Get first picture on screen
+
+### Task 7.1 — Run end-to-end path
+
+**Goal:** Validate full hybrid playback chain.
+
+**Path:**
+
+`GStreamer ingest/parsing -> native bridge -> MediaCodec -> SurfaceView`
+
+**Actions:**
+- start pipeline only after surface is ready, or hold decoder startup until surface exists
+- start decoder before first sample is pushed
+- observe logs at every boundary
+
+**Deliverable:**
+- first visible decoded video frame on the Android screen
+
+**Acceptance criteria:**
+- visible moving image appears on screen
+- logs show samples entering the bridge and frames being rendered
+
+### Task 7.2 — Add explicit failure diagnostics
+
+**Goal:** Make the first failure easy to localize if no picture appears.
+
+**Actions:**
+- for startup, print a compact diagnostic block containing:
+  - pipeline state
+  - appsink sample count
+  - first sample size
+  - decoder selected
+  - decoder started yes/no
+  - input queued count
+  - output rendered count
+- on failure, print the first stage where counters stop increasing
+
+**Deliverable:**
+- one concise startup/runtime diagnostic view in logs
+
+**Acceptance criteria:**
+- if playback fails, it is immediately obvious whether failure is in ingest, parser output, bridge, decoder input, or decoder output
+
+---
+
+## Stage 8 — Post-first-image stabilization
+
+These tasks are intentionally lower priority and should begin only after first visible playback works.
+
+### Task 8.1 — Improve timestamp handling
+
+**Goal:** Replace rough monotonic PTS with better timing derived from parser/RTP data where practical.
+
+### Task 8.2 — Handle packet loss / corruption recovery
+
+**Goal:** Reset or resync decoder cleanly after severe corruption and wait for next IDR.
+
+### Task 8.3 — Tune latency
+
+**Goal:** Minimize delay by reducing unnecessary buffering in:
+- rtpjitterbuffer
+- bridge queue
+- decoder feed logic
+
+### Task 8.4 — Add optional stats overlay or debug panel
+
+**Goal:** Show live counters for:
+- RTP/appsink samples
+- bridge queue depth
+- decoder input count
+- rendered frame count
+
+---
+
+## Explicit non-goals for this branch
+
+The following are **not** goals for the current branch unless first-image playback is already complete:
+
+- GStreamer-based Android rendering
+- `androidmedia` recovery experiments
+- `gstlibav` static-link fixes
+- OpenGL sink experiments
+- RTSP/SRT output
+- recording to file
+- audio support
+- fancy UI
+- adaptive streaming behavior
+
+---
+
+## Suggested execution order for Codex
+
+1. Remove GStreamer decode/render branches from active path.
+2. Lock parse-only ingest pipeline with appsink.
+3. Add reliable sample logging at appsink boundary.
+4. Add fullscreen SurfaceView.
+5. Implement `HevcDecoder` wrapper around MediaCodec.
+6. Implement JNI/native bridge from appsink to decoder.
+7. Feed parser output into decoder.
+8. Get first visible frame.
+9. Only after that: debug format edge cases, timing, recovery, latency.
+
+---
+
+## Done definition
+
+This branch is considered successful when all of the following are true:
+
+- the Android app no longer depends on GStreamer for decode/render
+- GStreamer is used only for UDP/RTP/H.265 ingest and parse
+- parsed HEVC data crosses the native bridge into Android code
+- MediaCodec successfully decodes to a SurfaceView
+- live video is visible on screen from the incoming RTP/H.265 stream
+
+---
+
+## Short task summary
+
+**Primary objective:**
+Get first visible live video on Android by keeping GStreamer only for `udpsrc -> rtpjitterbuffer -> rtph265depay -> h265parse` and moving decode/render to Android `MediaCodec` + `SurfaceView`.
+
+**Immediate next milestone:**
+Appsink receives parsed H.265 buffers and those buffers are successfully fed into `MediaCodec`.

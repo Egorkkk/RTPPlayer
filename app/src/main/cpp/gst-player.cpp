@@ -1,11 +1,13 @@
 #include "gst-player.h"
 
 #include <android/log.h>
+#include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -42,35 +44,135 @@ static void logFactoryDiagnostic(const char* factoryName) {
 }
 
 static void logRequiredFactoryDiagnostics() {
-    LOGI("GST_DIAG checking required element factories");
+    LOGI("GST_DIAG checking parse-only element factories");
     logFactoryDiagnostic("udpsrc");
     logFactoryDiagnostic("rtpjitterbuffer");
     logFactoryDiagnostic("rtph265depay");
     logFactoryDiagnostic("h265parse");
-    logFactoryDiagnostic("androidvideosink");
-    logFactoryDiagnostic("amcviddec-omxgoogleh265decoder");
-    logFactoryDiagnostic("avdec_h265");
+    logFactoryDiagnostic("appsink");
 }
 
-static std::string toAsciiLower(const char* value) {
-    if (!value) {
-        return "";
+static std::string formatHexPrefix(const guint8* data, gsize size, gsize maxBytes = 8) {
+    if (!data || size == 0) {
+        return "empty";
     }
 
-    std::string result(value);
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return result;
-}
+    char formatted[3 * 8 + 1] = {};
+    const gsize prefixSize = std::min(size, maxBytes);
+    gsize offset = 0;
 
-static bool containsAnyToken(const std::string& haystack,
-                             const std::vector<std::string>& tokens) {
-    for (const auto& token : tokens) {
-        if (haystack.find(token) != std::string::npos) {
-            return true;
+    for (gsize i = 0; i < prefixSize && offset < sizeof(formatted); ++i) {
+        const int written = std::snprintf(
+            formatted + offset,
+            sizeof(formatted) - offset,
+            i == 0 ? "%02X" : " %02X",
+            data[i]);
+        if (written <= 0) {
+            break;
         }
+        offset += static_cast<gsize>(written);
     }
-    return false;
+
+    return formatted;
+}
+
+static bool startsWithAnnexBStartCode(const guint8* data, gsize size) {
+    if (!data || size < 3) {
+        return false;
+    }
+
+    if (size >= 4 &&
+        data[0] == 0x00 && data[1] == 0x00 &&
+        data[2] == 0x00 && data[3] == 0x01) {
+        return true;
+    }
+
+    return data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01;
+}
+
+static const char* hevcNalTypeName(guint8 nalType) {
+    switch (nalType) {
+        case 19:
+            return "IDR_W_RADL";
+        case 20:
+            return "IDR_N_LP";
+        case 21:
+            return "CRA";
+        case 32:
+            return "VPS";
+        case 33:
+            return "SPS";
+        case 34:
+            return "PPS";
+        case 35:
+            return "AUD";
+        case 39:
+            return "PREFIX_SEI";
+        case 40:
+            return "SUFFIX_SEI";
+        default:
+            return "OTHER";
+    }
+}
+
+static std::string summarizeAnnexBNalTypes(const guint8* data,
+                                           gsize size,
+                                           bool* sawVps,
+                                           bool* sawSps,
+                                           bool* sawPps,
+                                           guint* nalCount) {
+    if (nalCount) {
+        *nalCount = 0;
+    }
+    if (!data || size < 5) {
+        return "none";
+    }
+
+    std::string summary;
+    for (gsize i = 0; i + 3 < size;) {
+        gsize nalStart = 0;
+        if (data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x01) {
+            nalStart = i + 3;
+        } else if (i + 4 < size &&
+                   data[i] == 0x00 && data[i + 1] == 0x00 &&
+                   data[i + 2] == 0x00 && data[i + 3] == 0x01) {
+            nalStart = i + 4;
+        } else {
+            ++i;
+            continue;
+        }
+
+        if (nalStart >= size) {
+            break;
+        }
+
+        const guint8 nalType = (data[nalStart] >> 1) & 0x3F;
+        if (nalCount) {
+            ++(*nalCount);
+        }
+        if (sawVps && nalType == 32) {
+            *sawVps = true;
+        }
+        if (sawSps && nalType == 33) {
+            *sawSps = true;
+        }
+        if (sawPps && nalType == 34) {
+            *sawPps = true;
+        }
+
+        if (!summary.empty()) {
+            summary += ",";
+        }
+        summary += hevcNalTypeName(nalType);
+        if (summary.size() > 96) {
+            summary += ",...";
+            break;
+        }
+
+        i = nalStart + 1;
+    }
+
+    return summary.empty() ? "none" : summary;
 }
 
 static void logFactoryEntryList(const char* category,
@@ -97,102 +199,7 @@ static void logFactoryEntryList(const char* category,
          joined.c_str());
 }
 
-static std::vector<std::string> collectFactoryEntriesByType(
-    GstElementFactoryListType type,
-    const std::vector<std::string>& nameTokens = {}) {
-    std::vector<std::string> entries;
-    GList* factories = gst_element_factory_list_get_elements(type, GST_RANK_NONE);
-
-    for (GList* node = factories; node != nullptr; node = node->next) {
-        auto* factory = GST_ELEMENT_FACTORY(node->data);
-        const gchar* factoryName = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
-        const gchar* pluginName = gst_plugin_feature_get_plugin_name(GST_PLUGIN_FEATURE(factory));
-        const gchar* longName =
-            gst_element_factory_get_metadata(factory, GST_ELEMENT_METADATA_LONGNAME);
-
-        if (!nameTokens.empty()) {
-            const std::string haystack =
-                toAsciiLower(factoryName) + " " +
-                toAsciiLower(pluginName) + " " +
-                toAsciiLower(longName);
-            if (!containsAnyToken(haystack, nameTokens)) {
-                continue;
-            }
-        }
-
-        std::string entry = factoryName ? factoryName : "(unknown)";
-        entry += "(";
-        entry += pluginName ? pluginName : "?";
-        entry += ")";
-        entries.push_back(entry);
-    }
-
-    gst_plugin_feature_list_free(factories);
-    return entries;
-}
-
-static std::vector<std::string> collectFactoryEntriesByPlugin(const char* pluginName) {
-    std::vector<std::string> entries;
-    GstRegistry* registry = gst_registry_get();
-    GList* features = gst_registry_get_feature_list_by_plugin(registry, pluginName);
-
-    for (GList* node = features; node != nullptr; node = node->next) {
-        auto* feature = GST_PLUGIN_FEATURE(node->data);
-        if (!GST_IS_ELEMENT_FACTORY(feature)) {
-            continue;
-        }
-
-        const gchar* factoryName = gst_plugin_feature_get_name(feature);
-        const gchar* longName = gst_element_factory_get_metadata(
-            GST_ELEMENT_FACTORY(feature), GST_ELEMENT_METADATA_LONGNAME);
-
-        std::string entry = factoryName ? factoryName : "(unknown)";
-        if (longName && *longName) {
-            entry += "[";
-            entry += longName;
-            entry += "]";
-        }
-        entries.push_back(entry);
-    }
-
-    gst_plugin_feature_list_free(features);
-    return entries;
-}
-
-static void logRegistryChoiceDiagnostics() {
-    LOGI("GST_DIAG enumerating video sink/decoder choices");
-
-    logFactoryEntryList(
-        "video_sinks",
-        collectFactoryEntriesByType(
-            GST_ELEMENT_FACTORY_TYPE_SINK | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO));
-
-    logFactoryEntryList(
-        "video_decoders",
-        collectFactoryEntriesByType(
-            GST_ELEMENT_FACTORY_TYPE_DECODER | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO));
-
-    logFactoryEntryList(
-        "h265_video_decoders",
-        collectFactoryEntriesByType(
-            GST_ELEMENT_FACTORY_TYPE_DECODER | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO,
-            {"265", "hevc"}));
-
-    logFactoryEntryList(
-        "androidmedia_elements",
-        collectFactoryEntriesByPlugin("androidmedia"));
-
-    LOGI("GST_DIAG checking generic helper factories");
-    logFactoryDiagnostic("decodebin");
-    logFactoryDiagnostic("decodebin3");
-    logFactoryDiagnostic("autovideosink");
-    logFactoryDiagnostic("glimagesink");
-    logFactoryDiagnostic("glsinkbin");
-    logFactoryDiagnostic("fakesink");
-    logFactoryDiagnostic("videoconvert");
-}
-
-static void logPipelineElementsForSinkDebug(GstElement* pipeline) {
+static void logPipelineElementsForParseDebug(GstElement* pipeline) {
     std::vector<std::string> entries;
     GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
     if (!it) {
@@ -217,7 +224,6 @@ static void logPipelineElementsForSinkDebug(GstElement* pipeline) {
                     const bool relevant =
                         gst_element_factory_list_is_type(
                             factory, GST_ELEMENT_FACTORY_TYPE_SINK |
-                                     GST_ELEMENT_FACTORY_TYPE_DECODER |
                                      GST_ELEMENT_FACTORY_TYPE_PARSER |
                                      GST_ELEMENT_FACTORY_TYPE_DEPAYLOADER);
 
@@ -291,7 +297,6 @@ bool GstPlayer::init() {
 
     initialized_ = true;
     logRequiredFactoryDiagnostics();
-    logRegistryChoiceDiagnostics();
     LOGI("GstPlayer::init — GStreamer initialized successfully");
     return true;
 }
@@ -397,8 +402,117 @@ bool GstPlayer::buildPipeline() {
     }
 
     pipeline_ = pipeline;
+    resetSampleStats();
+
+    auto* appSink = GST_APP_SINK(
+        gst_bin_get_by_name(GST_BIN(pipeline_), "hevcappsink"));
+    if (!appSink) {
+        LOGE("GstPlayer::buildPipeline — could not find element 'hevcappsink' in pipeline");
+        logPipelineElementsForParseDebug(GST_ELEMENT(pipeline_));
+        gst_object_unref(GST_OBJECT(pipeline_));
+        pipeline_ = nullptr;
+        return false;
+    }
+
+    GstAppSinkCallbacks callbacks = {};
+    callbacks.new_sample = &GstPlayer::onNewSampleThunk;
+    gst_app_sink_set_callbacks(appSink, &callbacks, this, nullptr);
+    appSinkElement_ = appSink;
+
     LOGI("GstPlayer::buildPipeline — pipeline built successfully");
+    logPipelineElementsForParseDebug(GST_ELEMENT(pipeline_));
     return true;
+}
+
+void GstPlayer::resetSampleStats() {
+    sampleCount_.store(0);
+    sampleBytes_.store(0);
+    sawVps_ = false;
+    sawSps_ = false;
+    sawPps_ = false;
+}
+
+GstFlowReturn GstPlayer::onNewSampleThunk(GstAppSink* sink, gpointer userData) {
+    auto* player = static_cast<GstPlayer*>(userData);
+    return player ? player->onNewSample(sink) : GST_FLOW_ERROR;
+}
+
+GstFlowReturn GstPlayer::onNewSample(GstAppSink* sink) {
+    GstSample* sample = gst_app_sink_pull_sample(sink);
+    if (!sample) {
+        LOGW("GST_APPSINK sample pull returned null");
+        return GST_FLOW_ERROR;
+    }
+
+    const uint64_t sampleIndex = sampleCount_.fetch_add(1) + 1;
+    GstCaps* caps = gst_sample_get_caps(sample);
+    if (sampleIndex == 1 && caps) {
+        gchar* capsString = gst_caps_to_string(caps);
+        const GstStructure* capsStruct = gst_caps_get_structure(caps, 0);
+        const gchar* streamFormat =
+            capsStruct ? gst_structure_get_string(capsStruct, "stream-format") : nullptr;
+        const gchar* alignment =
+            capsStruct ? gst_structure_get_string(capsStruct, "alignment") : nullptr;
+        LOGI("GST_APPSINK first-sample caps=%s stream-format=%s alignment=%s",
+             capsString ? capsString : "(null)",
+             streamFormat ? streamFormat : "(unset)",
+             alignment ? alignment : "(unset)");
+        g_free(capsString);
+    }
+
+    GstBuffer* buffer = gst_sample_get_buffer(sample);
+    if (!buffer) {
+        LOGW("GST_APPSINK sample=%llu has no buffer",
+             static_cast<unsigned long long>(sampleIndex));
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+    }
+
+    GstMapInfo map = {};
+    const bool mapped = gst_buffer_map(buffer, &map, GST_MAP_READ);
+    const guint size = mapped ? static_cast<guint>(map.size) : gst_buffer_get_size(buffer);
+    sampleBytes_.fetch_add(size);
+
+    const guint64 pts =
+        GST_BUFFER_PTS_IS_VALID(buffer) ? GST_BUFFER_PTS(buffer) / 1000 : GST_CLOCK_TIME_NONE;
+    const guint64 dts =
+        GST_BUFFER_DTS_IS_VALID(buffer) ? GST_BUFFER_DTS(buffer) / 1000 : GST_CLOCK_TIME_NONE;
+    const bool isDelta = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+    const bool isHeader = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_HEADER);
+    const bool isDiscont = GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT);
+    const bool hasAnnexB = mapped && startsWithAnnexBStartCode(map.data, map.size);
+    guint nalCount = 0;
+    const std::string nalSummary = hasAnnexB
+        ? summarizeAnnexBNalTypes(map.data, map.size, &sawVps_, &sawSps_, &sawPps_, &nalCount)
+        : "non-annexb";
+
+    if (sampleIndex <= 10 || sampleIndex % 60 == 0) {
+        LOGI("GST_APPSINK sample=%llu size=%u ptsUs=%s%llu dtsUs=%s%llu keyframe=%d header=%d discont=%d annexb=%d nalCount=%u nals=%s seenVps=%d seenSps=%d seenPps=%d prefix=%s totalBytes=%llu",
+             static_cast<unsigned long long>(sampleIndex),
+             size,
+             pts == GST_CLOCK_TIME_NONE ? "invalid:" : "",
+             pts == GST_CLOCK_TIME_NONE ? 0ULL : static_cast<unsigned long long>(pts),
+             dts == GST_CLOCK_TIME_NONE ? "invalid:" : "",
+             dts == GST_CLOCK_TIME_NONE ? 0ULL : static_cast<unsigned long long>(dts),
+             isDelta ? 0 : 1,
+             isHeader ? 1 : 0,
+             isDiscont ? 1 : 0,
+             hasAnnexB ? 1 : 0,
+             nalCount,
+             nalSummary.c_str(),
+             sawVps_ ? 1 : 0,
+             sawSps_ ? 1 : 0,
+             sawPps_ ? 1 : 0,
+             mapped ? formatHexPrefix(map.data, map.size).c_str() : "unmapped",
+             static_cast<unsigned long long>(sampleBytes_.load()));
+    }
+
+    if (mapped) {
+        gst_buffer_unmap(buffer, &map);
+    }
+
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
 }
 
 // ── Timeout Check Callback ────────────────────────────────────────────
@@ -558,22 +672,8 @@ bool GstPlayer::start(ANativeWindow* window) {
         return false;
     }
 
-    // ── Set the Android surface as the video sink target ──────────────
-    GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline_), "androidvideosink");
-
-    if (!sink) {
-        LOGE("GstPlayer::start — could not find element 'androidvideosink' in pipeline. "
-             "Make sure the pipeline string includes: androidvideosink name=androidvideosink");
-        logPipelineElementsForSinkDebug(GST_ELEMENT(pipeline_));
-        gst_object_unref(GST_OBJECT(pipeline_));
-        pipeline_ = nullptr;
-        return false;
-    }
-
-    g_object_set(G_OBJECT(sink), "widget", window, nullptr);
-    gst_object_unref(GST_OBJECT(sink));
-
-    LOGI("GstPlayer::start — androidvideosink configured with ANativeWindow %p", window);
+    LOGI("GstPlayer::start — parse-only pipeline active; ANativeWindow %p reserved for MediaCodec stage",
+         window);
 
     // ── Find the udpsrc element for data flow monitoring ──────────────
     udpsrcElement_ = gst_bin_get_by_name(GST_BIN(pipeline_), "udpsrc0");
@@ -733,10 +833,16 @@ void GstPlayer::stop() {
         udpsrcElement_ = nullptr;
     }
 
+    if (appSinkElement_) {
+        gst_object_unref(GST_OBJECT(appSinkElement_));
+        appSinkElement_ = nullptr;
+    }
+
     // Clear error state.
     hasError_.store(false);
     lastError_.clear();
     lastDataTime_ = 0;
+    resetSampleStats();
 
     running_ = false;
     LOGI("GstPlayer::stop — pipeline stopped and cleaned up");

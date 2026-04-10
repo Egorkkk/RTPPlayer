@@ -84,6 +84,7 @@ target_link_libraries(
     # 1. GStreamer Plugins (Static)
     -Wl,--whole-archive
     ${GST_LIB_DIR}/gstreamer-1.0/libgstcoreelements.a
+    ${GST_LIB_DIR}/gstreamer-1.0/libgstapp.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstudp.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstrtp.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstrtpmanager.a
@@ -97,6 +98,7 @@ target_link_libraries(
     -Wl,--no-whole-archive
 
     # 2. GStreamer Helper Libraries
+    ${GST_LIB_DIR}/libgstapp-1.0.a
     ${GST_LIB_DIR}/libgstpbutils-1.0.a
     ${GST_LIB_DIR}/libgstvideo-1.0.a
     ${GST_LIB_DIR}/libgstaudio-1.0.a
