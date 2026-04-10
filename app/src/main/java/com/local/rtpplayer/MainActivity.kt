@@ -75,6 +75,9 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
     // Reset on successful start or when going to background.
     private var reconnectAttempts = 0
 
+    // Whether the temporary UDP probe is currently running.
+    private var udpProbeRunning = false
+
     // ── Handlers and runnables ────────────────────────────────────────
 
     // Retry handler — for retrying failed pipeline starts.
@@ -153,6 +156,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         // Reset reconnect counter when coming to foreground.
         reconnectAttempts = 0
+        udpProbeRunning = false
 
         // Configure the pipeline string (idempotent).
         GStreamer.setPipeline(defaultPipeline)
@@ -174,6 +178,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         // Reset reconnect counter.
         reconnectAttempts = 0
+        udpProbeRunning = false
 
         // Stop the pipeline.
         stopPipeline()
@@ -328,10 +333,41 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
             // Attempt to reconnect (one retry with delay).
             reconnectAttempts++
             if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                Log.d(TAG, "checkStreamStatus — scheduling reconnect retry in ${RETRY_DELAY_MS}ms")
-                retryHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
+                if (error.contains("No data received")) {
+                    runUdpProbeBeforeRetry()
+                } else {
+                    Log.d(TAG, "checkStreamStatus — scheduling reconnect retry in ${RETRY_DELAY_MS}ms")
+                    retryHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
+                }
             } else {
                 Log.w(TAG, "checkStreamStatus — max reconnect attempts reached")
+            }
+        }
+    }
+
+    private fun runUdpProbeBeforeRetry() {
+        if (udpProbeRunning) {
+            Log.d(TAG, "runUdpProbeBeforeRetry — probe already running")
+            return
+        }
+
+        udpProbeRunning = true
+        Log.i(TAG, "runUdpProbeBeforeRetry — starting one-shot UDP probe on port 5600")
+
+        UdpDebugProbe.runOnce(port = 5600, timeoutMs = 1500) { result ->
+            runOnUiThread {
+                udpProbeRunning = false
+
+                if (result.received) {
+                    Log.i(TAG, "runUdpProbeBeforeRetry — ${result.detail}")
+                } else {
+                    Log.w(TAG, "runUdpProbeBeforeRetry — ${result.detail}")
+                }
+
+                if (wantsRunning && surfaceReady && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    Log.d(TAG, "runUdpProbeBeforeRetry — scheduling reconnect retry in ${RETRY_DELAY_MS}ms")
+                    retryHandler.postDelayed(retryRunnable, RETRY_DELAY_MS)
+                }
             }
         }
     }
