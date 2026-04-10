@@ -105,13 +105,22 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
     // Active branch path: ingest/jitter/depay/parse only.
     // Decode/render moves to Android MediaCodec and will be wired later.
     //
-    private val defaultPipeline = buildString {
-        append("udpsrc name=udpsrc0 port=5600 buffer-size=7000 ! ")
-        append("application/x-rtp,media=video,encoding-name=H265,payload=96 ! ")
-        append("rtpjitterbuffer latency=0 drop-on-latency=true ! ")
-        append("rtph265depay ! ")
-        append("h265parse config-interval=-1 ! ")
-        append("appsink name=hevcappsink emit-signals=false sync=false max-buffers=8 drop=true")
+    private fun buildDefaultPipeline(): String {
+        val bindAddress = NetworkDebug.getPreferredIpv4Address(this)
+        val pipeline = buildString {
+            append("udpsrc name=udpsrc0 ")
+            if (!bindAddress.isNullOrBlank()) {
+                append("address=$bindAddress ")
+            }
+            append("port=5600 buffer-size=7000 ! ")
+            append("application/x-rtp,media=video,encoding-name=H265,payload=96 ! ")
+            append("rtpjitterbuffer latency=0 drop-on-latency=true ! ")
+            append("rtph265depay ! ")
+            append("h265parse config-interval=-1 ! ")
+            append("appsink name=hevcappsink emit-signals=false sync=false max-buffers=8 drop=true")
+        }
+        Log.i(TAG, "buildDefaultPipeline — bindAddress=${bindAddress ?: "0.0.0.0(auto)"}")
+        return pipeline
     }
 
     // ── Activity Lifecycle ──────────────────────────────────────────
@@ -159,7 +168,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         udpProbeRunning = false
 
         // Configure the pipeline string (idempotent).
-        GStreamer.setPipeline(defaultPipeline)
+        GStreamer.setPipeline(buildDefaultPipeline())
 
         // Start the periodic status checker.
         statusHandler.postDelayed(statusRunnable, STATUS_CHECK_INTERVAL_MS)

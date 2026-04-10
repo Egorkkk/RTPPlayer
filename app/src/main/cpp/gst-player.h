@@ -88,6 +88,7 @@ private:
     void resetSampleStats();
     static GstFlowReturn onNewSampleThunk(GstAppSink* sink, gpointer userData);
     GstFlowReturn onNewSample(GstAppSink* sink);
+    bool configureUdpsrcSocket(GstElement* udpsrc);
 
     // GLib main loop thread
     void startMainLoop();
@@ -137,6 +138,9 @@ private:
 
     // The appsink element that receives parsed HEVC output after h265parse.
     void* appSinkElement_ = nullptr;
+
+    // The externally created UDP socket passed into udpsrc for diagnostics.
+    void* externalUdpSocket_ = nullptr;
 
     // Parser/appsink diagnostics.
     std::atomic<uint64_t> sampleCount_{0};

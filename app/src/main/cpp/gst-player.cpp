@@ -1,6 +1,7 @@
 #include "gst-player.h"
 
 #include <android/log.h>
+#include <gio/gio.h>
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 
@@ -252,6 +253,101 @@ static void logPipelineElementsForParseDebug(GstElement* pipeline) {
 
     gst_iterator_free(it);
     logFactoryEntryList("pipeline_relevant_elements", entries);
+}
+
+static void logUdpsrcSocketDetails(GstElement* udpsrc) {
+    if (!udpsrc) {
+        LOGW("GST_UDPSRC socket-details unavailable: null element");
+        return;
+    }
+
+    gchar* address = nullptr;
+    gint port = 0;
+    gboolean reuse = FALSE;
+    GSocket* usedSocket = nullptr;
+    g_object_get(
+        G_OBJECT(udpsrc),
+        "address", &address,
+        "port", &port,
+        "reuse", &reuse,
+        "used-socket", &usedSocket,
+        nullptr);
+
+    LOGI("GST_UDPSRC config address=%s port=%d reuse=%d usedSocket=%p",
+         address ? address : "(null)",
+         port,
+         reuse ? 1 : 0,
+         usedSocket);
+
+    if (usedSocket) {
+        GError* error = nullptr;
+        GSocketAddress* localAddress = g_socket_get_local_address(usedSocket, &error);
+        if (!localAddress) {
+            LOGW("GST_UDPSRC local-address unavailable: %s",
+                 error ? error->message : "unknown");
+            if (error) {
+                g_error_free(error);
+            }
+        } else if (G_IS_INET_SOCKET_ADDRESS(localAddress)) {
+            auto* inetAddress = g_inet_socket_address_get_address(
+                G_INET_SOCKET_ADDRESS(localAddress));
+            gchar* ip = g_inet_address_to_string(inetAddress);
+            const guint16 boundPort = g_inet_socket_address_get_port(
+                G_INET_SOCKET_ADDRESS(localAddress));
+            LOGI("GST_UDPSRC bound-local=%s:%u family=%d blocking=%d",
+                 ip ? ip : "(null)",
+                 boundPort,
+                 static_cast<int>(g_socket_get_family(usedSocket)),
+                 g_socket_get_blocking(usedSocket) ? 1 : 0);
+            g_free(ip);
+            g_object_unref(localAddress);
+        } else {
+            LOGI("GST_UDPSRC local-address type=%s",
+                 G_OBJECT_TYPE_NAME(localAddress));
+            g_object_unref(localAddress);
+        }
+
+        g_object_unref(usedSocket);
+    }
+
+    g_free(address);
+}
+
+static GSocket* createBoundUdpSocket(guint16 port) {
+    GError* error = nullptr;
+    GSocket* socket = g_socket_new(
+        G_SOCKET_FAMILY_IPV4,
+        G_SOCKET_TYPE_DATAGRAM,
+        G_SOCKET_PROTOCOL_UDP,
+        &error);
+    if (!socket) {
+        LOGE("GST_UDPSRC custom-socket create failed: %s",
+             error ? error->message : "unknown");
+        if (error) {
+            g_error_free(error);
+        }
+        return nullptr;
+    }
+
+    GInetAddress* anyAddress = g_inet_address_new_any(G_SOCKET_FAMILY_IPV4);
+    GSocketAddress* bindAddress = g_inet_socket_address_new(anyAddress, port);
+    g_object_unref(anyAddress);
+
+    if (!g_socket_bind(socket, bindAddress, TRUE, &error)) {
+        LOGE("GST_UDPSRC custom-socket bind failed on port=%u: %s",
+             port,
+             error ? error->message : "unknown");
+        if (error) {
+            g_error_free(error);
+        }
+        g_object_unref(bindAddress);
+        g_object_unref(socket);
+        return nullptr;
+    }
+
+    g_object_unref(bindAddress);
+    LOGI("GST_UDPSRC custom-socket bound on 0.0.0.0:%u socket=%p", port, socket);
+    return socket;
 }
 
 // ── Time helper ───────────────────────────────────────────────────────
@@ -515,6 +611,40 @@ GstFlowReturn GstPlayer::onNewSample(GstAppSink* sink) {
     return GST_FLOW_OK;
 }
 
+bool GstPlayer::configureUdpsrcSocket(GstElement* udpsrc) {
+    if (!udpsrc) {
+        LOGE("GST_UDPSRC configure failed: null udpsrc");
+        return false;
+    }
+
+    guint port = 0;
+    g_object_get(G_OBJECT(udpsrc), "port", &port, nullptr);
+    if (port == 0) {
+        LOGE("GST_UDPSRC configure failed: invalid port=0");
+        return false;
+    }
+
+    if (externalUdpSocket_) {
+        g_object_unref(G_OBJECT(externalUdpSocket_));
+        externalUdpSocket_ = nullptr;
+    }
+
+    GSocket* socket = createBoundUdpSocket(static_cast<guint16>(port));
+    if (!socket) {
+        return false;
+    }
+
+    g_object_set(
+        G_OBJECT(udpsrc),
+        "socket", socket,
+        "close-socket", FALSE,
+        nullptr);
+    externalUdpSocket_ = socket;
+
+    LOGI("GST_UDPSRC custom-socket attached to udpsrc port=%u", port);
+    return true;
+}
+
 // ── Timeout Check Callback ────────────────────────────────────────────
 // Fires every 2 seconds on the GLib main loop. Checks whether data has
 // been received recently by looking at the udpsrc element's byte counter.
@@ -715,6 +845,17 @@ bool GstPlayer::start(ANativeWindow* window) {
 
     if (udpsrcElement_) {
         LOGD("GstPlayer::start — udpsrc element found, monitoring bytes-served");
+        if (!configureUdpsrcSocket(GST_ELEMENT(udpsrcElement_))) {
+            LOGE("GstPlayer::start — failed to configure custom udpsrc socket");
+            gst_element_set_state(GST_ELEMENT(pipeline_), GST_STATE_NULL);
+            gst_object_unref(GST_OBJECT(pipeline_));
+            pipeline_ = nullptr;
+            if (udpsrcElement_) {
+                gst_object_unref(GST_OBJECT(udpsrcElement_));
+                udpsrcElement_ = nullptr;
+            }
+            return false;
+        }
     } else {
         LOGW("GstPlayer::start — could not find udpsrc element in pipeline, "
              "no-data timeout will not work");
@@ -781,6 +922,21 @@ bool GstPlayer::start(ANativeWindow* window) {
         return false;
     }
 
+    GstState currentState = GST_STATE_NULL;
+    GstState pendingState = GST_STATE_NULL;
+    const GstStateChangeReturn stateQuery = gst_element_get_state(
+        GST_ELEMENT(pipeline_),
+        &currentState,
+        &pendingState,
+        250 * GST_MSECOND);
+    LOGI("GstPlayer::start — get_state return=%d current=%s pending=%s",
+         stateQuery,
+         gst_element_state_get_name(currentState),
+         gst_element_state_get_name(pendingState));
+    if (udpsrcElement_) {
+        logUdpsrcSocketDetails(GST_ELEMENT(udpsrcElement_));
+    }
+
     running_ = true;
     LOGI("GstPlayer::start — pipeline is PLAYING (state_change_return: %d)", ret);
     return true;
@@ -839,6 +995,11 @@ void GstPlayer::stop() {
     if (appSinkElement_) {
         gst_object_unref(GST_OBJECT(appSinkElement_));
         appSinkElement_ = nullptr;
+    }
+
+    if (externalUdpSocket_) {
+        g_object_unref(G_OBJECT(externalUdpSocket_));
+        externalUdpSocket_ = nullptr;
     }
 
     // Clear error state.
