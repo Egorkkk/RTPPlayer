@@ -100,6 +100,7 @@ target_link_libraries(
     ${GST_LIB_DIR}/libgstaudio-1.0.a
     ${GST_LIB_DIR}/libgsttag-1.0.a
     ${GST_LIB_DIR}/libgstrtp-1.0.a
+    ${GST_LIB_DIR}/libgstallocators-1.0.a
     ${GST_LIB_DIR}/libgstcodecparsers-1.0.a
     ${GST_LIB_DIR}/libgstnet-1.0.a
     ${GST_LIB_DIR}/libgstbase-1.0.a

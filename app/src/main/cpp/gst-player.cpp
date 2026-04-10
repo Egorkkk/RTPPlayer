@@ -3,7 +3,11 @@
 #include <android/log.h>
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <string>
+#include <vector>
 
 #define LOG_TAG "GstPlayerNative"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
@@ -45,6 +49,202 @@ static void logRequiredFactoryDiagnostics() {
     logFactoryDiagnostic("h265parse");
     logFactoryDiagnostic("androidvideosink");
     logFactoryDiagnostic("amcviddec-omxgoogleh265decoder");
+}
+
+static std::string toAsciiLower(const char* value) {
+    if (!value) {
+        return "";
+    }
+
+    std::string result(value);
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return result;
+}
+
+static bool containsAnyToken(const std::string& haystack,
+                             const std::vector<std::string>& tokens) {
+    for (const auto& token : tokens) {
+        if (haystack.find(token) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void logFactoryEntryList(const char* category,
+                                std::vector<std::string> entries) {
+    std::sort(entries.begin(), entries.end());
+    entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
+
+    if (entries.empty()) {
+        LOGW("GST_DIAG category=%s count=0", category);
+        return;
+    }
+
+    std::string joined;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i > 0) {
+            joined += ", ";
+        }
+        joined += entries[i];
+    }
+
+    LOGI("GST_DIAG category=%s count=%zu entries=%s",
+         category,
+         entries.size(),
+         joined.c_str());
+}
+
+static std::vector<std::string> collectFactoryEntriesByType(
+    GstElementFactoryListType type,
+    const std::vector<std::string>& nameTokens = {}) {
+    std::vector<std::string> entries;
+    GList* factories = gst_element_factory_list_get_elements(type, GST_RANK_NONE);
+
+    for (GList* node = factories; node != nullptr; node = node->next) {
+        auto* factory = GST_ELEMENT_FACTORY(node->data);
+        const gchar* factoryName = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+        const gchar* pluginName = gst_plugin_feature_get_plugin_name(GST_PLUGIN_FEATURE(factory));
+        const gchar* longName =
+            gst_element_factory_get_metadata(factory, GST_ELEMENT_METADATA_LONGNAME);
+
+        if (!nameTokens.empty()) {
+            const std::string haystack =
+                toAsciiLower(factoryName) + " " +
+                toAsciiLower(pluginName) + " " +
+                toAsciiLower(longName);
+            if (!containsAnyToken(haystack, nameTokens)) {
+                continue;
+            }
+        }
+
+        std::string entry = factoryName ? factoryName : "(unknown)";
+        entry += "(";
+        entry += pluginName ? pluginName : "?";
+        entry += ")";
+        entries.push_back(entry);
+    }
+
+    gst_plugin_feature_list_free(factories);
+    return entries;
+}
+
+static std::vector<std::string> collectFactoryEntriesByPlugin(const char* pluginName) {
+    std::vector<std::string> entries;
+    GstRegistry* registry = gst_registry_get();
+    GList* features = gst_registry_get_feature_list_by_plugin(registry, pluginName);
+
+    for (GList* node = features; node != nullptr; node = node->next) {
+        auto* feature = GST_PLUGIN_FEATURE(node->data);
+        if (!GST_IS_ELEMENT_FACTORY(feature)) {
+            continue;
+        }
+
+        const gchar* factoryName = gst_plugin_feature_get_name(feature);
+        const gchar* longName = gst_element_factory_get_metadata(
+            GST_ELEMENT_FACTORY(feature), GST_ELEMENT_METADATA_LONGNAME);
+
+        std::string entry = factoryName ? factoryName : "(unknown)";
+        if (longName && *longName) {
+            entry += "[";
+            entry += longName;
+            entry += "]";
+        }
+        entries.push_back(entry);
+    }
+
+    gst_plugin_feature_list_free(features);
+    return entries;
+}
+
+static void logRegistryChoiceDiagnostics() {
+    LOGI("GST_DIAG enumerating video sink/decoder choices");
+
+    logFactoryEntryList(
+        "video_sinks",
+        collectFactoryEntriesByType(
+            GST_ELEMENT_FACTORY_TYPE_SINK | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO));
+
+    logFactoryEntryList(
+        "video_decoders",
+        collectFactoryEntriesByType(
+            GST_ELEMENT_FACTORY_TYPE_DECODER | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO));
+
+    logFactoryEntryList(
+        "h265_video_decoders",
+        collectFactoryEntriesByType(
+            GST_ELEMENT_FACTORY_TYPE_DECODER | GST_ELEMENT_FACTORY_TYPE_MEDIA_VIDEO,
+            {"265", "hevc"}));
+
+    logFactoryEntryList(
+        "androidmedia_elements",
+        collectFactoryEntriesByPlugin("androidmedia"));
+
+    LOGI("GST_DIAG checking generic helper factories");
+    logFactoryDiagnostic("decodebin");
+    logFactoryDiagnostic("decodebin3");
+    logFactoryDiagnostic("autovideosink");
+    logFactoryDiagnostic("glimagesink");
+    logFactoryDiagnostic("glsinkbin");
+    logFactoryDiagnostic("fakesink");
+    logFactoryDiagnostic("videoconvert");
+}
+
+static void logPipelineElementsForSinkDebug(GstElement* pipeline) {
+    std::vector<std::string> entries;
+    GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
+    if (!it) {
+        LOGW("GST_DIAG pipeline-elements unavailable");
+        return;
+    }
+
+    gboolean done = FALSE;
+    while (!done) {
+        GValue item = G_VALUE_INIT;
+        switch (gst_iterator_next(it, &item)) {
+            case GST_ITERATOR_OK: {
+                auto* elem = GST_ELEMENT(g_value_get_object(&item));
+                auto* factory = gst_element_get_factory(elem);
+                if (factory) {
+                    const gchar* factoryName =
+                        gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+                    const gchar* pluginName =
+                        gst_plugin_feature_get_plugin_name(GST_PLUGIN_FEATURE(factory));
+                    const gchar* elementName = gst_element_get_name(elem);
+
+                    const bool relevant =
+                        gst_element_factory_list_is_type(
+                            factory, GST_ELEMENT_FACTORY_TYPE_SINK |
+                                     GST_ELEMENT_FACTORY_TYPE_DECODER |
+                                     GST_ELEMENT_FACTORY_TYPE_PARSER |
+                                     GST_ELEMENT_FACTORY_TYPE_DEPAYLOADER);
+
+                    if (relevant) {
+                        std::string entry = elementName ? elementName : "(unnamed)";
+                        entry += "=";
+                        entry += factoryName ? factoryName : "(unknown)";
+                        entry += "(";
+                        entry += pluginName ? pluginName : "?";
+                        entry += ")";
+                        entries.push_back(entry);
+                    }
+                }
+                g_value_reset(&item);
+                break;
+            }
+            case GST_ITERATOR_RESYNC:
+                gst_iterator_resync(it);
+                break;
+            case GST_ITERATOR_ERROR:
+            case GST_ITERATOR_DONE:
+                done = TRUE;
+                break;
+        }
+    }
+
+    gst_iterator_free(it);
+    logFactoryEntryList("pipeline_relevant_elements", entries);
 }
 
 // ── Time helper ───────────────────────────────────────────────────────
@@ -90,6 +290,7 @@ bool GstPlayer::init() {
 
     initialized_ = true;
     logRequiredFactoryDiagnostics();
+    logRegistryChoiceDiagnostics();
     LOGI("GstPlayer::init — GStreamer initialized successfully");
     return true;
 }
@@ -362,6 +563,7 @@ bool GstPlayer::start(ANativeWindow* window) {
     if (!sink) {
         LOGE("GstPlayer::start — could not find element 'androidvideosink' in pipeline. "
              "Make sure the pipeline string includes: androidvideosink name=androidvideosink");
+        logPipelineElementsForSinkDebug(GST_ELEMENT(pipeline_));
         gst_object_unref(GST_OBJECT(pipeline_));
         pipeline_ = nullptr;
         return false;
