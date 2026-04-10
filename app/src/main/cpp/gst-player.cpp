@@ -754,11 +754,14 @@ bool GstPlayer::start(ANativeWindow* window) {
 
     // ── Set up periodic timeout check ─────────────────────────────────
     // Fires every 2 seconds on the main loop to check if data is arriving.
-    timeoutSourceId_ = g_timeout_add_seconds(
-        2,
-        timeout_check_callback,
-        this
-    );
+    GSource* timeoutSource = g_timeout_source_new_seconds(2);
+    g_source_set_callback(
+        timeoutSource,
+        reinterpret_cast<GSourceFunc>(timeout_check_callback),
+        this,
+        nullptr);
+    timeoutSourceId_ = g_source_attach(timeoutSource, GST_MAIN_CTX_CAST(mainContext_));
+    g_source_unref(timeoutSource);
 
     LOGD("GstPlayer::start — timeout check timer attached (source id: %u)",
          timeoutSourceId_);

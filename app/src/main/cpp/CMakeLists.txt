@@ -75,8 +75,8 @@ add_library(gstreamer-player SHARED ${NATIVE_SOURCES})
 
 # ── Link GStreamer libraries ──────────────────────────────────────────
 # Note: Linking against static libraries (.a).
-# We use --start-group/--end-group because GStreamer and FFmpeg static
-# libraries have many circular dependencies.
+# We use --start-group/--end-group because GStreamer static
+# libraries have circular dependencies.
 target_link_libraries(
     gstreamer-player
 
@@ -92,7 +92,6 @@ target_link_libraries(
     ${GST_LIB_DIR}/gstreamer-1.0/libgstisomp4.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstandroidmedia.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstopengl.a
-    ${GST_LIB_DIR}/gstreamer-1.0/libgstlibav.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstvideoconvertscale.a
     ${GST_LIB_DIR}/gstreamer-1.0/libgstplayback.a
     -Wl,--no-whole-archive
@@ -115,12 +114,6 @@ target_link_libraries(
     ${GST_LIB_DIR}/libgraphene-1.0.a
     ${GST_LIB_DIR}/libpng16.a
     ${GST_LIB_DIR}/libjpeg.a
-    ${GST_LIB_DIR}/libavcodec.a
-    ${GST_LIB_DIR}/libavfilter.a
-    ${GST_LIB_DIR}/libavformat.a
-    ${GST_LIB_DIR}/libavutil.a
-    ${GST_LIB_DIR}/libswscale.a
-    ${GST_LIB_DIR}/libswresample.a
 
     # 3. GStreamer Core
     ${GST_LIB_DIR}/libgstreamer-1.0.a
@@ -154,8 +147,6 @@ target_link_libraries(
 )
 
 # Force 4KB page size.
-# We no longer use -fuse-ld=bfd or -Wl,-z,notext because we've removed the
-# libraries with text relocations (FFmpeg).
 target_link_options(gstreamer-player PRIVATE
     "-Wl,-z,max-page-size=4096"
 )

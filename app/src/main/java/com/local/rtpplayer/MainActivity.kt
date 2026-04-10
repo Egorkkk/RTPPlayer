@@ -215,13 +215,7 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         logLifecycle("surfaceChanged — ${width}x${height}, format=$format")
-
-        // If the surface changes dimensions while the pipeline is running,
-        // we need to restart the pipeline so it picks up the new surface.
-        if (pipelineRunning) {
-            Log.d(TAG, "surfaceChanged — surface changed while running, restarting pipeline")
-            restartPipeline()
-        }
+        Log.d(TAG, "surfaceChanged — parse-only pipeline ignores surface resize")
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -309,18 +303,6 @@ class MainActivity : AppCompatActivity(), SurfaceHolder.Callback {
         GStreamer.stop()
         pipelineRunning = false
         Log.i(TAG, "stopPipeline — pipeline stopped")
-    }
-
-    /**
-     * Restart the pipeline (stop + start).
-     * Used when the surface changes dimensions.
-     */
-    private fun restartPipeline() {
-        Log.d(TAG, "restartPipeline — stopping and restarting")
-        pipelineRunning = false
-        GStreamer.stop()
-        GStreamer.setPipeline(defaultPipeline)
-        tryStartPipeline()
     }
 
     /**
