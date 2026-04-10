@@ -1,0 +1,6 @@
+# ninja log v5
+5	692	7975509873911462	CMakeFiles/gstreamer-player.dir/gstreamer-jni.cpp.o	fa7d13f8a92f7b4f
+5	917	7975514709596898	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	b685f16f25f8e7fa
+5	263	7975469790692193	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/61112ls5/obj/arm64-v8a/libgstreamer-player.so	847904a72a84a873
+1	141	7975515007089102	build.ninja	8dadc6559742ce0f
+0	8	0	clean	81e5a168194b04b1

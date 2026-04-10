@@ -1,0 +1,3 @@
+C:/Users/egork/Downloads/rtpplayer/app/.cxx/Debug/606bm3d4/arm64-v8a/CMakeFiles/gstreamer-player.dir
+C:/Users/egork/Downloads/rtpplayer/app/.cxx/Debug/606bm3d4/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/egork/Downloads/rtpplayer/app/.cxx/Debug/606bm3d4/arm64-v8a/CMakeFiles/rebuild_cache.dir

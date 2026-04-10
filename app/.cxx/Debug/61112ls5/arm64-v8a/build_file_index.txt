@@ -1,0 +1,1 @@
+C:\Users\egork\Downloads\rtpplayer\app\src\main\cpp\CMakeLists.txt

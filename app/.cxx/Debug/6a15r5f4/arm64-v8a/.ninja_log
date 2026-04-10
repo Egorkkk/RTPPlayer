@@ -1,0 +1,12 @@
+# ninja log v5
+5	828	7975545723585520	CMakeFiles/gstreamer-player.dir/gstreamer-jni.cpp.o	f3b59c5018d7e546
+11	863	7975545723908622	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
+990	1273	7975540808743221	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	56533268d517b66c
+1	129	7975550526385977	build.ninja	7ffbae1b08fd211e
+0	9	0	clean	81e5a168194b04b1
+5	879	7975550536068470	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
+880	1146	7975550538313403	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084
+6	809	7975566251944447	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
+810	1099	7975566254416903	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084
+6	843	7975568074352461	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
+844	1125	7975568076716259	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084

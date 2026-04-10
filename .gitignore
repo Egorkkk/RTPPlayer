@@ -1,0 +1,22 @@
+# Build output
+/build
+/app/build
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+
+# GStreamer .so files (copied automatically from SDK)
+app/src/main/jniLibs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gradle
+.gradle/
