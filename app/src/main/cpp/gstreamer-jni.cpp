@@ -72,10 +72,12 @@ Java_com_local_rtpplayer_GStreamer_nativeInit(JNIEnv* env, jclass /*clazz*/,
 
     // ── Set GStreamer environment variables for Android ───────────────
 
-    // Tell GStreamer where to find plugin .so files.
-    // All .so files (core + plugins) are in the flat native lib directory.
+    // Keep the plugin path for compatibility during transition, but
+    // statically linked plugins should become visible via the SDK-style
+    // gst_init_static_plugins() bootstrap instead of runtime .so scanning.
     g_setenv("GST_PLUGIN_PATH", nativeLibDir, TRUE);
-    LOGD("nativeInit — GST_PLUGIN_PATH=%s", nativeLibDir);
+    LOGD("nativeInit — GST_PLUGIN_PATH=%s (compat only; static bootstrap should provide factories)",
+         nativeLibDir);
 
     // Disable system-wide plugin scanning (speeds up init, avoids
     // scanning irrelevant directories on the device).

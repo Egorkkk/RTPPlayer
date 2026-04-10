@@ -65,6 +65,7 @@ include_directories(
 
 # ── Source files ───────────────────────────────────────────────────────
 set(NATIVE_SOURCES
+    gstreamer_android_bootstrap.c
     gstreamer-jni.cpp
     gst-player.cpp
 )
@@ -144,4 +145,3 @@ target_link_libraries(
 target_link_options(gstreamer-player PRIVATE
     "-Wl,-z,max-page-size=4096"
 )
-

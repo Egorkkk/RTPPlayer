@@ -5,22 +5,6 @@
 
 #include <chrono>
 
-// ── Static Plugin Declarations ────────────────────────────────────────
-// Since we are linking plugins statically, we must declare and register them.
-#include <gst/gst.h>
-
-extern "C" {
-GST_PLUGIN_STATIC_DECLARE(coreelements);
-GST_PLUGIN_STATIC_DECLARE(udp);
-GST_PLUGIN_STATIC_DECLARE(rtp);
-GST_PLUGIN_STATIC_DECLARE(rtpmanager);
-GST_PLUGIN_STATIC_DECLARE(videoparsersbad);
-GST_PLUGIN_STATIC_DECLARE(isomp4);
-GST_PLUGIN_STATIC_DECLARE(androidmedia);
-GST_PLUGIN_STATIC_DECLARE(videoconvertscale);
-GST_PLUGIN_STATIC_DECLARE(playback);
-}
-
 #define LOG_TAG "GstPlayerNative"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -90,18 +74,7 @@ bool GstPlayer::init() {
         return true;
     }
 
-    // Register static plugins before gst_init
-    LOGI("GST_DIAG static plugin registration starting");
-    GST_PLUGIN_STATIC_REGISTER(coreelements);
-    GST_PLUGIN_STATIC_REGISTER(udp);
-    GST_PLUGIN_STATIC_REGISTER(rtp);
-    GST_PLUGIN_STATIC_REGISTER(rtpmanager);
-    GST_PLUGIN_STATIC_REGISTER(videoparsersbad);
-    GST_PLUGIN_STATIC_REGISTER(isomp4);
-    GST_PLUGIN_STATIC_REGISTER(androidmedia);
-    GST_PLUGIN_STATIC_REGISTER(videoconvertscale);
-    GST_PLUGIN_STATIC_REGISTER(playback);
-    LOGI("GST_DIAG static plugin registration finished");
+    LOGI("GST_DIAG expecting sdk static bootstrap during gst_init_check");
 
     GError* error = nullptr;
     gboolean result = gst_init_check(nullptr, nullptr, &error);

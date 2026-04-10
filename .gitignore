@@ -1,6 +1,7 @@
 # Build output
 /build
 /app/build
+/app/.cxx
 *.apk
 *.aab
 

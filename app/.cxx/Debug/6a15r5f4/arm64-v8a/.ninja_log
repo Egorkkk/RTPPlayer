@@ -10,3 +10,7 @@
 810	1099	7975566254416903	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084
 6	843	7975568074352461	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
 844	1125	7975568076716259	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084
+0	11	0	clean	81e5a168194b04b1
+5	982	7975574845564021	CMakeFiles/gstreamer-player.dir/gstreamer-jni.cpp.o	f3b59c5018d7e546
+11	1010	7975574845820167	CMakeFiles/gstreamer-player.dir/gst-player.cpp.o	607c8ae53c99a6b8
+1011	1337	7975574848614605	C:/Users/egork/Downloads/rtpplayer/app/build/intermediates/cxx/Debug/6a15r5f4/obj/arm64-v8a/libgstreamer-player.so	500318fbe048084
